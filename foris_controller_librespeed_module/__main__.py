@@ -52,6 +52,8 @@ def main():
         print(e)
         sys.exit(1)
 
+    args.append("--insecure")
+
     proc = Popen(
         args,
         text=True,
