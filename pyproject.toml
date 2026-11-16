@@ -13,7 +13,6 @@ authors = [
 ]
 dependencies = [
     "foris-controller",
-    "python-dateutil",
 ]
 
 [project.optional-dependencies]
@@ -33,9 +32,6 @@ ubus = [
 
 [project.entry-points.foris_controller_modules]
 librespeed = "foris_controller_modules.librespeed"
-
-[project.scripts]
-turris-librespeed = "foris_controller_librespeed_module.__main__:main"
 
 [tool.hatch.version]
 path = "foris_controller_librespeed_module/__init__.py"

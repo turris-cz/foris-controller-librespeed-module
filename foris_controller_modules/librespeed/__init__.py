@@ -1,6 +1,6 @@
 #
 # foris-controller-librespeed-module
-# Copyright (C) 2022 CZ.NIC, z.s.p.o. (http://www.nic.cz/)
+# Copyright (C) 2022-2026 CZ.NIC, z.s.p.o. (http://www.nic.cz/)
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -18,7 +18,6 @@
 #
 
 import logging
-from datetime import date
 
 from foris_controller.handler_base import wrap_required_functions
 from foris_controller.module_base import BaseModule
@@ -27,38 +26,48 @@ from foris_controller.module_base import BaseModule
 class LibreSpeedModule(BaseModule):
     logger = logging.getLogger(__name__)
 
-    def action_get_settings(self, data):
-        return self.handler.get_settings()
+    # Measurements: get_status is the state of record, polled by clients.
 
-    def action_update_settings(self, data):
-        res = self.handler.update_settings(server_id_in_data="server_id" in data, **data)
-        if res:
-            self.notify("update_settings", data)
-        return {"result": res}
+    def action_get_status(self, data):
+        return self.handler.get_status()
 
-    def action_get_data(self, data):
-        months = data.get("months", 2)
-        until = date.fromisoformat(data.get("until", date.today().strftime("%Y-%m-%d")))
-        return self.handler.get_data(months, until)
+    def action_start(self, data):
+        return self.handler.start(data.get("interface"))
 
-    def action_measure(self, data):
-        def notify(msg):
-            self.notify("measure", msg)
+    def action_stop(self, data):
+        return self.handler.stop()
 
-        def exit_notify(msg):
-            self.notify("measure", msg)
+    def action_get_result(self, data):
+        return self.handler.get_result()
 
-        return {
-            "async_id": self.handler.measure(notify, exit_notify, self.reset_notify)
-        }
+    def action_get_history(self, data):
+        return self.handler.get_history(data)
+
+    # Settings
+
+    def action_get_config(self, data):
+        return self.handler.get_config()
+
+    def action_update_config(self, data):
+        res = self.handler.update_config(data)
+        if res["result"]:
+            self.notify("update_config", data)
+        return res
+
+    def action_get_links(self, data):
+        return self.handler.get_links()
 
 
 @wrap_required_functions(
     [
-        "get_settings",
-        "update_settings",
-        "get_data",
-        "measure",
+        "get_status",
+        "start",
+        "stop",
+        "get_result",
+        "get_history",
+        "get_config",
+        "update_config",
+        "get_links",
     ]
 )
 class Handler:

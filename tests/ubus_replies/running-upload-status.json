@@ -1,0 +1,11 @@
+{
+	"running": true,
+	"phase": "upload",
+	"interface": "wan",
+	"pid": 356,
+	"started": 1794850035,
+	"elapsed": 16,
+	"failures": [
+		
+	]
+}

@@ -1,0 +1,15 @@
+{
+	"links": [
+		"lte",
+		"wan"
+	],
+	"interfaces": {
+		"lan": "lan",
+		"wan": "wan",
+		"wan6": "wan",
+		"lte": "lte"
+	},
+	"down": [
+		"lte"
+	]
+}

@@ -1,0 +1,13 @@
+{
+	"running": false,
+	"last_error": "Terminated due to error: Selected server Down (192.0.2.2) is not responding: Get \"http://192.0.2.2:9/empty.php\": dial tcp 192.0.2.2:9: connect: connection refused",
+	"interface": "wan",
+	"last_finished": 1794850110,
+	"failures": [
+		{
+			"interface": "wan",
+			"error": "Terminated due to error: Selected server Down (192.0.2.2) is not responding: Get \"http://192.0.2.2:9/empty.php\": dial tcp 192.0.2.2:9: connect: connection refused",
+			"finished": 1794850110
+		}
+	]
+}

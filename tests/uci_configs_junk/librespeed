@@ -1,0 +1,24 @@
+
+config librespeed 'main'
+	option interface 'wan;reboot'
+	option server 'prague'
+	option scheme 'gopher'
+	option server_list 'ftp://example.org/servers.json'
+
+config librespeed 'schedule'
+	option enabled 'maybe'
+	option interval '90m'
+	option days '1,2,'
+	option hours '22-4'
+
+config librespeed 'history'
+	option enabled '1'
+	option path 'relative/history.jsonl'
+	option retention 'forever'
+	option archive_path 'x'
+	option archive_retention '0d'
+
+config schedule
+	option interval '0h'
+	list days '1'
+	list days '9'

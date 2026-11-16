@@ -1,72 +1,645 @@
 {
+    "definitions": {
+        "librespeed_interface": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_]+$(?!\n)",
+            "description": "Logical network interface, a section of /etc/config/network such as \"wan\"."
+        },
+        "librespeed_epoch": {"type": "integer", "minimum": 0, "description": "Unix time in seconds."},
+        "librespeed_phase": {
+            "enum": ["", "ping", "download", "upload"],
+            "description": "Stage of a running measurement; empty while it connects and when nothing runs."
+        },
+        "librespeed_start_error": {
+            "enum": [
+                "already_running",
+                "not_installed",
+                "unknown_interface",
+                "interface_not_configured",
+                "interface_down",
+                "netifd_unavailable",
+                "backend_unavailable"
+            ],
+            "description": "Why no measurement was started. already_running: another one runs, wait for it. not_installed: librespeed-run is missing. unknown_interface: no such interface in /etc/config/network. interface_not_configured: netifd does not know it, for example it is disabled. interface_down: its link is down. netifd_unavailable: netifd did not answer. backend_unavailable: the librespeed ubus object did not answer, or answered something this module does not know."
+        },
+        "librespeed_config_error": {
+            "enum": ["duplicate_link", "invalid_hours"],
+            "description": "Why update_config changed nothing. duplicate_link: two enabled schedules would measure one link (wan and wan6 are one link; a schedule without an interface measures the default interface). invalid_hours: a window ends before it starts."
+        },
+        "librespeed_server_choice": {
+            "type": "string",
+            "pattern": "^(auto|[0-9]+)$(?!\n)",
+            "description": "Server id from the server list, or \"auto\" to pick the closest server."
+        },
+        "librespeed_scheme": {
+            "enum": ["auto", "https", "http"],
+            "description": "auto uses what the server offers. On routers without AES acceleration TLS itself can bound the result, and http then measures the line rather than the cipher."
+        },
+        "librespeed_server_list": {
+            "type": "string",
+            "pattern": "^(https?://\\S+)?$(?!\n)",
+            "description": "URL of a LibreSpeed server list in JSON; empty uses the official list."
+        },
+        "librespeed_failure": {
+            "type": "object",
+            "properties": {
+                "interface": {"$ref": "#/definitions/librespeed_interface"},
+                "error": {
+                    "type": "string",
+                    "description": "What its last measurement failed with, in librespeed-run's words."
+                },
+                "finished": {"$ref": "#/definitions/librespeed_epoch"}
+            },
+            "additionalProperties": false,
+            "required": ["interface", "error", "finished"]
+        },
+        "librespeed_server": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "integer",
+                    "description": "Id in the server list; absent when the client did not report it."
+                },
+                "name": {"type": "string"},
+                "url": {"type": "string"}
+            },
+            "additionalProperties": false,
+            "required": ["name", "url"]
+        },
+        "librespeed_family": {"enum": ["ipv4", "ipv6"], "description": "Address family the measurement ran over."},
+        "librespeed_proto": {"enum": ["http", "https"], "description": "Whether the measurement was encrypted."},
+        "librespeed_measurement": {
+            "type": "object",
+            "description": "The last completed measurement.",
+            "properties": {
+                "timestamp": {"type": "string", "description": "When the client started measuring (RFC 3339)."},
+                "started": {"$ref": "#/definitions/librespeed_epoch"},
+                "finished": {"$ref": "#/definitions/librespeed_epoch"},
+                "interface": {
+                    "$ref": "#/definitions/librespeed_interface",
+                    "description": "Absent in a result recorded before results were kept per interface."
+                },
+                "server": {"$ref": "#/definitions/librespeed_server"},
+                "client": {
+                    "type": "object",
+                    "properties": {
+                        "ip": {
+                            "type": "string",
+                            "description": "Public address the server saw; empty when unknown."
+                        },
+                        "org": {
+                            "type": "string",
+                            "description": "Its network operator; empty when unknown."
+                        }
+                    },
+                    "additionalProperties": false,
+                    "required": ["ip", "org"]
+                },
+                "family": {"$ref": "#/definitions/librespeed_family"},
+                "proto": {"$ref": "#/definitions/librespeed_proto"},
+                "download_mbps": {"type": "number"},
+                "upload_mbps": {"type": "number"},
+                "ping_ms": {"type": "number"},
+                "jitter_ms": {"type": "number"},
+                "bytes_sent": {"type": "integer", "minimum": 0},
+                "bytes_received": {"type": "integer", "minimum": 0},
+                "share": {
+                    "type": "string",
+                    "description": "URL of the result image on the server; empty when it has none."
+                }
+            },
+            "additionalProperties": false,
+            "required": [
+                "timestamp",
+                "started",
+                "finished",
+                "server",
+                "client",
+                "download_mbps",
+                "upload_mbps",
+                "ping_ms",
+                "jitter_ms",
+                "bytes_sent",
+                "bytes_received",
+                "share"
+            ]
+        },
+        "librespeed_history_entry": {
+            "type": "object",
+            "description": "With resolution raw, one measurement. With resolution 1d, one day of one interface: the plain metric is the day's mean, *_min and *_max its extremes, samples how many measurements it summarises.",
+            "properties": {
+                "timestamp": {
+                    "type": "string",
+                    "description": "RFC 3339 time, or the day (YYYY-MM-DD) of an aggregate."
+                },
+                "epoch": {
+                    "$ref": "#/definitions/librespeed_epoch",
+                    "description": "When it finished, or the day's start."
+                },
+                "interface": {
+                    "$ref": "#/definitions/librespeed_interface",
+                    "description": "Absent in entries recorded before results were kept per interface."
+                },
+                "server": {"$ref": "#/definitions/librespeed_server"},
+                "family": {"$ref": "#/definitions/librespeed_family"},
+                "proto": {"$ref": "#/definitions/librespeed_proto"},
+                "samples": {"type": "integer", "minimum": 1},
+                "download_mbps": {"type": "number"},
+                "download_mbps_min": {"type": "number"},
+                "download_mbps_max": {"type": "number"},
+                "upload_mbps": {"type": "number"},
+                "upload_mbps_min": {"type": "number"},
+                "upload_mbps_max": {"type": "number"},
+                "ping_ms": {"type": "number"},
+                "ping_ms_min": {"type": "number"},
+                "ping_ms_max": {"type": "number"},
+                "jitter_ms": {"type": "number"},
+                "jitter_ms_min": {"type": "number"},
+                "jitter_ms_max": {"type": "number"}
+            },
+            "additionalProperties": false,
+            "required": ["timestamp", "epoch"]
+        },
+        "librespeed_interval": {
+            "type": "string",
+            "pattern": "^(([1-9]|[1-5][0-9])m|([1-9]|1[0-9]|2[0-3])h|1d|7d)$(?!\n)",
+            "description": "Every 1-59 minutes (\"15m\"), every 1-23 hours (\"6h\"), daily (\"1d\") or weekly (\"7d\")."
+        },
+        "librespeed_days": {
+            "type": "array",
+            "items": {"type": "integer", "minimum": 0, "maximum": 6},
+            "uniqueItems": true,
+            "description": "Weekdays it may run on, 0 is Sunday and 6 Saturday; empty means every day. A weekly measurement runs on one of them, drawn once and kept while it stays allowed."
+        },
+        "librespeed_hours": {
+            "description": "Hour window on the router's clock, both hours inclusive (2 to 5 is 02:00-05:59); null means any time. A daily or weekly measurement runs at a random time inside it, drawn when the schedule is applied; shorter intervals only run within it. It must not cross midnight.",
+            "oneOf": [
+                {"type": "null"},
+                {
+                    "type": "object",
+                    "properties": {
+                        "from": {"type": "integer", "minimum": 0, "maximum": 23},
+                        "to": {"type": "integer", "minimum": 0, "maximum": 23}
+                    },
+                    "additionalProperties": false,
+                    "required": ["from", "to"]
+                }
+            ]
+        },
+        "librespeed_schedule": {
+            "type": "object",
+            "description": "The original schedule (UCI section \"schedule\"), the one v1's autostart_enabled switches. Without an interface it measures the default interface.",
+            "properties": {
+                "enabled": {"type": "boolean"},
+                "interval": {
+                    "type": "string",
+                    "description": "As configured; cron runs only the intervals update_config accepts, others are skipped."
+                },
+                "days": {
+                    "$ref": "#/definitions/librespeed_days",
+                    "description": "Empty also when the stored value is invalid, as cron then runs every day."
+                },
+                "hours": {
+                    "$ref": "#/definitions/librespeed_hours",
+                    "description": "null also when the stored value is invalid, as cron then runs at any time."
+                },
+                "interface": {"type": ["string", "null"], "description": "null: the default interface."}
+            },
+            "additionalProperties": false,
+            "required": ["enabled", "interface", "interval", "days", "hours"]
+        },
+        "librespeed_schedule_update": {
+            "type": "object",
+            "description": "The original schedule (UCI section \"schedule\"), the one v1's autostart_enabled switches. Without an interface it measures the default interface.",
+            "properties": {
+                "enabled": {"type": "boolean"},
+                "interval": {"$ref": "#/definitions/librespeed_interval"},
+                "days": {"$ref": "#/definitions/librespeed_days"},
+                "hours": {"$ref": "#/definitions/librespeed_hours"},
+                "interface": {
+                    "oneOf": [{"$ref": "#/definitions/librespeed_interface"}, {"type": "null"}],
+                    "description": "null: the default interface."
+                }
+            },
+            "additionalProperties": false,
+            "required": ["enabled", "interface", "interval", "days", "hours"]
+        },
+        "librespeed_interface_schedule": {
+            "type": "object",
+            "description": "A further schedule, measuring the interface it names.",
+            "properties": {
+                "enabled": {"type": "boolean"},
+                "interval": {
+                    "type": "string",
+                    "description": "As configured; cron runs only the intervals update_config accepts, others are skipped."
+                },
+                "days": {
+                    "$ref": "#/definitions/librespeed_days",
+                    "description": "Empty also when the stored value is invalid, as cron then runs every day."
+                },
+                "hours": {
+                    "$ref": "#/definitions/librespeed_hours",
+                    "description": "null also when the stored value is invalid, as cron then runs at any time."
+                },
+                "interface": {"type": "string"}
+            },
+            "additionalProperties": false,
+            "required": ["enabled", "interface", "interval", "days", "hours"]
+        },
+        "librespeed_interface_schedule_update": {
+            "type": "object",
+            "description": "A further schedule, measuring the interface it names.",
+            "properties": {
+                "enabled": {"type": "boolean"},
+                "interval": {"$ref": "#/definitions/librespeed_interval"},
+                "days": {"$ref": "#/definitions/librespeed_days"},
+                "hours": {"$ref": "#/definitions/librespeed_hours"},
+                "interface": {"$ref": "#/definitions/librespeed_interface"}
+            },
+            "additionalProperties": false,
+            "required": ["enabled", "interface", "interval", "days", "hours"]
+        },
+        "librespeed_applied_schedule": {
+            "type": "object",
+            "description": "A line librespeed's init script put in /etc/crontabs/root, as it stands now.",
+            "properties": {
+                "interface": {"$ref": "#/definitions/librespeed_interface"},
+                "cron": {
+                    "type": "string",
+                    "description": "The crontab line; for a daily or weekly interval it holds the drawn time."
+                },
+                "next_runs": {
+                    "type": "array",
+                    "items": {"$ref": "#/definitions/librespeed_epoch"},
+                    "description": "The next up to three runs."
+                }
+            },
+            "additionalProperties": false,
+            "required": ["interface", "cron", "next_runs"]
+        },
+        "librespeed_history_settings_reply": {
+            "type": "object",
+            "properties": {
+                "enabled": {"type": "boolean", "description": "Whether results are recorded."},
+                "path": {
+                    "type": "string",
+                    "description": "Raw history (JSON lines); under /tmp it is lost when the router reboots."
+                },
+                "retention_days": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "How long raw results are kept; 0 when not a whole number of days, and then nothing is trimmed."
+                },
+                "archive_path": {
+                    "type": "string",
+                    "description": "Daily aggregates on persistent storage; empty keeps no archive."
+                },
+                "archive_retention_days": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "How long daily aggregates are kept; 365 when not a whole number of days, as librespeed reads it."
+                }
+            },
+            "additionalProperties": false,
+            "required": ["enabled", "path", "retention_days", "archive_path", "archive_retention_days"]
+        },
+        "librespeed_history_settings": {
+            "type": "object",
+            "properties": {
+                "enabled": {"type": "boolean", "description": "Whether results are recorded."},
+                "path": {
+                    "type": "string",
+                    "pattern": "^/[^\\n]*$(?!\n)",
+                    "description": "Raw history (JSON lines); under /tmp it is lost when the router reboots."
+                },
+                "retention_days": {"type": "integer", "minimum": 1, "maximum": 3650, "description": "How long raw results are kept."},
+                "archive_path": {
+                    "type": "string",
+                    "pattern": "^(/[^\\n]*)?$(?!\n)",
+                    "description": "Daily aggregates are appended here once a day; it belongs on persistent storage. Empty keeps no archive."
+                },
+                "archive_retention_days": {"type": "integer", "minimum": 1, "maximum": 3650}
+            },
+            "additionalProperties": false
+        }
+    },
     "oneOf": [
         {
-            "description": "Get librespeed settings request",
+            "description": "Get the state of measurements. The state of record: poll it about every 2 s while one runs and every 30 s otherwise, since cron and LuCI start measurements too.",
             "properties": {
                 "module": {"enum": ["librespeed"]},
                 "kind": {"enum": ["request"]},
-                "action": {"enum": ["get_settings"]}
+                "action": {"enum": ["get_status"]}
             },
             "additionalProperties": false
         },
         {
-            "description": "Get librespeed settings reply",
+            "description": "Get status reply",
             "properties": {
                 "module": {"enum": ["librespeed"]},
                 "kind": {"enum": ["reply"]},
-                "action": {"enum": ["get_settings"]},
+                "action": {"enum": ["get_status"]},
                 "data": {
                     "type": "object",
                     "properties": {
-                        "autostart_enabled": {"type": "boolean"},
-                        "server_id": {
-                            "oneOf": [
-                                {"type": "null"},
-                                {"type": "string"}
-                            ]
+                        "running": {"type": "boolean"},
+                        "phase": {"$ref": "#/definitions/librespeed_phase"},
+                        "interface": {
+                            "$ref": "#/definitions/librespeed_interface",
+                            "description": "While running: the link measured, once the run is bound to it. Otherwise: the interface the last measurement failed for."
+                        },
+                        "started": {
+                            "$ref": "#/definitions/librespeed_epoch",
+                            "description": "When the running measurement started."
+                        },
+                        "elapsed_seconds": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "description": "Seconds since started, on the router's clock."
+                        },
+                        "speed_mbps": {"type": "number", "description": "Speed in the running stage so far."},
+                        "phase_progress_percent": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 100,
+                            "description": "How far the running stage is; absent with clients that do not report it."
+                        },
+                        "last_error": {
+                            "type": "string",
+                            "description": "Why the last measurement failed; empty when it succeeded or one runs, \"stopped\" when it was stopped."
+                        },
+                        "last_finished": {
+                            "$ref": "#/definitions/librespeed_epoch",
+                            "description": "When the last measurement ended."
+                        },
+                        "failures": {
+                            "type": "array",
+                            "items": {"$ref": "#/definitions/librespeed_failure"},
+                            "description": "Each interface's last failure, newest first, kept until its link measures successfully."
                         }
                     },
                     "additionalProperties": false,
-                    "required": ["autostart_enabled", "server_id"]
+                    "required": ["running", "phase", "last_error", "failures"]
                 }
             },
             "additionalProperties": false,
             "required": ["data"]
         },
         {
-            "description": "Update librespeed settings request",
+            "description": "Start a measurement in the background. The reply comes once it runs, has already ended, or after 5 s at most; get_status then tells which.",
             "properties": {
                 "module": {"enum": ["librespeed"]},
                 "kind": {"enum": ["request"]},
-                "action": {"enum": ["update_settings"]},
+                "action": {"enum": ["start"]},
                 "data": {
                     "type": "object",
                     "properties": {
-                        "autostart_enabled": {"type": "boolean"},
-                        "server_id": {
-                            "oneOf": [
-                                {"type": "null"},
-                                {"type": "string"}
-                            ]
+                        "interface": {
+                            "$ref": "#/definitions/librespeed_interface",
+                            "description": "Interface to measure; the default interface when absent."
                         }
                     },
+                    "additionalProperties": false
+                }
+            },
+            "additionalProperties": false
+        },
+        {
+            "description": "Start reply",
+            "properties": {
+                "module": {"enum": ["librespeed"]},
+                "kind": {"enum": ["reply"]},
+                "action": {"enum": ["start"]},
+                "data": {
+                    "type": "object",
+                    "properties": {
+                        "started": {"type": "boolean"},
+                        "error": {"$ref": "#/definitions/librespeed_start_error"},
+                        "message": {"type": "string", "description": "The refusal in librespeed's own words."}
+                    },
                     "additionalProperties": false,
-                    "required": ["autostart_enabled"]
+                    "required": ["started"]
                 }
             },
             "additionalProperties": false,
             "required": ["data"]
         },
         {
-            "description": "Update librespeed settings reply",
+            "description": "Stop the running measurement, however it was started.",
+            "properties": {
+                "module": {"enum": ["librespeed"]},
+                "kind": {"enum": ["request"]},
+                "action": {"enum": ["stop"]}
+            },
+            "additionalProperties": false
+        },
+        {
+            "description": "Stop reply",
             "properties": {
                 "module": {"enum": ["librespeed"]},
                 "kind": {"enum": ["reply"]},
-                "action": {"enum": ["update_settings"]},
+                "action": {"enum": ["stop"]},
                 "data": {
                     "type": "object",
                     "properties": {
-                        "result": {"type": "boolean"}
+                        "stopped": {
+                            "type": "boolean",
+                            "description": "True when one was running as stop was asked and was told to stop; unless it ended first, get_status reports last_error \"stopped\" within seconds."
+                        }
+                    },
+                    "additionalProperties": false,
+                    "required": ["stopped"]
+                }
+            },
+            "additionalProperties": false,
+            "required": ["data"]
+        },
+        {
+            "description": "Get the last completed measurement.",
+            "properties": {
+                "module": {"enum": ["librespeed"]},
+                "kind": {"enum": ["request"]},
+                "action": {"enum": ["get_result"]}
+            },
+            "additionalProperties": false
+        },
+        {
+            "description": "Get result reply",
+            "properties": {
+                "module": {"enum": ["librespeed"]},
+                "kind": {"enum": ["reply"]},
+                "action": {"enum": ["get_result"]},
+                "data": {
+                    "type": "object",
+                    "properties": {
+                        "measurement": {
+                            "oneOf": [{"$ref": "#/definitions/librespeed_measurement"}, {"type": "null"}],
+                            "description": "null before the first one."
+                        }
+                    },
+                    "additionalProperties": false,
+                    "required": ["measurement"]
+                }
+            },
+            "additionalProperties": false,
+            "required": ["data"]
+        },
+        {
+            "description": "Get recorded results. A range within the raw retention comes from the raw history. With a daily archive configured, a range reaching further back, or one without from, comes from the archive (completed days only); resolution says which, and the two never mix.",
+            "properties": {
+                "module": {"enum": ["librespeed"]},
+                "kind": {"enum": ["request"]},
+                "action": {"enum": ["get_history"]},
+                "data": {
+                    "type": "object",
+                    "properties": {
+                        "from": {
+                            "$ref": "#/definitions/librespeed_epoch",
+                            "description": "Oldest epoch to include; pass it to get raw results when an archive is kept."
+                        },
+                        "to": {
+                            "$ref": "#/definitions/librespeed_epoch",
+                            "description": "Newest epoch to include; all when absent."
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "description": "Return only the newest this many entries."
+                        }
+                    },
+                    "additionalProperties": false
+                }
+            },
+            "additionalProperties": false
+        },
+        {
+            "description": "Get history reply",
+            "properties": {
+                "module": {"enum": ["librespeed"]},
+                "kind": {"enum": ["reply"]},
+                "action": {"enum": ["get_history"]},
+                "data": {
+                    "type": "object",
+                    "properties": {
+                        "resolution": {"enum": ["raw", "1d"]},
+                        "entries": {
+                            "type": "array",
+                            "items": {"$ref": "#/definitions/librespeed_history_entry"},
+                            "description": "Oldest first."
+                        }
+                    },
+                    "additionalProperties": false,
+                    "required": ["resolution", "entries"]
+                }
+            },
+            "additionalProperties": false,
+            "required": ["data"]
+        },
+        {
+            "description": "Get the measurement, schedule and history settings.",
+            "properties": {
+                "module": {"enum": ["librespeed"]},
+                "kind": {"enum": ["request"]},
+                "action": {"enum": ["get_config"]}
+            },
+            "additionalProperties": false
+        },
+        {
+            "description": "Get config reply",
+            "properties": {
+                "module": {"enum": ["librespeed"]},
+                "kind": {"enum": ["reply"]},
+                "action": {"enum": ["get_config"]},
+                "data": {
+                    "type": "object",
+                    "properties": {
+                        "interface": {"type": "string", "description": "Default interface, as configured."},
+                        "server": {"type": "string", "description": "\"auto\" or a server id, as configured."},
+                        "scheme": {
+                            "$ref": "#/definitions/librespeed_scheme",
+                            "description": "auto also when the stored value is unknown, as librespeed then uses the server's."
+                        },
+                        "server_list": {
+                            "type": "string",
+                            "description": "As configured; empty uses the official list."
+                        },
+                        "schedule": {
+                            "oneOf": [{"$ref": "#/definitions/librespeed_schedule"}, {"type": "null"}],
+                            "description": "null when the section was removed."
+                        },
+                        "interface_schedules": {
+                            "type": "array",
+                            "items": {"$ref": "#/definitions/librespeed_interface_schedule"}
+                        },
+                        "applied_schedules": {
+                            "type": "array",
+                            "items": {"$ref": "#/definitions/librespeed_applied_schedule"},
+                            "description": "What cron runs now. After update_config it catches up within seconds, and a row that stays missing was skipped (see the system log)."
+                        },
+                        "history": {"allOf": [{"$ref": "#/definitions/librespeed_history_settings_reply"}]}
+                    },
+                    "additionalProperties": false,
+                    "required": [
+                        "interface",
+                        "server",
+                        "scheme",
+                        "server_list",
+                        "schedule",
+                        "interface_schedules",
+                        "applied_schedules",
+                        "history"
+                    ]
+                }
+            },
+            "additionalProperties": false,
+            "required": ["data"]
+        },
+        {
+            "description": "Update settings; what is left out stays as it is.",
+            "properties": {
+                "module": {"enum": ["librespeed"]},
+                "kind": {"enum": ["request"]},
+                "action": {"enum": ["update_config"]},
+                "data": {
+                    "type": "object",
+                    "properties": {
+                        "interface": {
+                            "$ref": "#/definitions/librespeed_interface",
+                            "description": "Default interface: measured when start names none and by a \"schedule\" row without one."
+                        },
+                        "server": {"$ref": "#/definitions/librespeed_server_choice"},
+                        "scheme": {"$ref": "#/definitions/librespeed_scheme"},
+                        "server_list": {"$ref": "#/definitions/librespeed_server_list"},
+                        "schedule": {
+                            "oneOf": [{"$ref": "#/definitions/librespeed_schedule_update"}, {"type": "null"}],
+                            "description": "Replaces the original schedule; null removes it."
+                        },
+                        "interface_schedules": {
+                            "type": "array",
+                            "items": {"$ref": "#/definitions/librespeed_interface_schedule_update"},
+                            "description": "Replaces all further schedules; one left out is removed."
+                        },
+                        "history": {"$ref": "#/definitions/librespeed_history_settings"}
+                    },
+                    "additionalProperties": false,
+                    "minProperties": 1
+                }
+            },
+            "additionalProperties": false,
+            "required": ["data"]
+        },
+        {
+            "description": "Update config reply",
+            "properties": {
+                "module": {"enum": ["librespeed"]},
+                "kind": {"enum": ["reply"]},
+                "action": {"enum": ["update_config"]},
+                "data": {
+                    "type": "object",
+                    "properties": {
+                        "result": {"type": "boolean"},
+                        "error": {"$ref": "#/definitions/librespeed_config_error"},
+                        "message": {"type": "string"}
                     },
                     "additionalProperties": false,
                     "required": ["result"]
@@ -76,139 +649,75 @@
             "required": ["data"]
         },
         {
-            "description": "Notification that the librespeed settings were updated",
+            "description": "Notification that the settings were updated",
             "properties": {
                 "module": {"enum": ["librespeed"]},
                 "kind": {"enum": ["notification"]},
-                "action": {"enum": ["update_settings"]},
+                "action": {"enum": ["update_config"]},
                 "data": {
                     "type": "object",
                     "properties": {
-                        "autostart_enabled": {"type": "boolean"},
-                        "server_id": {
-                            "oneOf": [
-                                {"type": "null"},
-                                {"type": "string"}
-                            ]
+                        "interface": {
+                            "$ref": "#/definitions/librespeed_interface",
+                            "description": "Default interface: measured when start names none and by a \"schedule\" row without one."
                         },
-                        "hours_to_run": {
+                        "server": {"$ref": "#/definitions/librespeed_server_choice"},
+                        "scheme": {"$ref": "#/definitions/librespeed_scheme"},
+                        "server_list": {"$ref": "#/definitions/librespeed_server_list"},
+                        "schedule": {
+                            "oneOf": [{"$ref": "#/definitions/librespeed_schedule_update"}, {"type": "null"}],
+                            "description": "Replaces the original schedule; null removes it."
+                        },
+                        "interface_schedules": {
                             "type": "array",
-                            "items": {"type": "integer", "minimum": 0, "maximum": 23}
-                        }
-                    },
-                    "additionalProperties": false,
-                    "required": ["autostart_enabled"]
-                }
-            },
-            "additionalProperties": false,
-            "required": ["data"]
-        },
-        {
-            "description": "Get librespeed data request",
-            "properties": {
-                "module": {"enum": ["librespeed"]},
-                "kind": {"enum": ["request"]},
-                "action": {"enum": ["get_data"]},
-                "data": {
-                    "type": "object",
-                    "properties": {
-                        "months": {
-                            "type": "integer",
-                            "minimum": 1,
-                            "description": "How many months should be returned in single api call"
+                            "items": {"$ref": "#/definitions/librespeed_interface_schedule_update"},
+                            "description": "Replaces all further schedules; one left out is removed."
                         },
-                        "until": {
-                            "type": "string",
-                            "format": "date",
-                            "description": "Untile when the data should be returned"
-                        }
+                        "history": {"$ref": "#/definitions/librespeed_history_settings"}
                     },
                     "additionalProperties": false
                 }
             },
-            "additionalProperties": false
-        },
-        {
-            "description": "Get librespeed data reply",
-            "properties": {
-                "module": {"enum": ["librespeed"]},
-                "kind": {"enum": ["reply"]},
-                "action": {"enum": ["get_data"]},
-                "data": {
-                    "type": "object",
-                    "properties": {
-                        "performed_tests": {
-                            "type": "array",
-                            "items": {
-                                "type": "object",
-                                "properties": {
-                                    "time": {"type": "string"},
-                                    "server": {"type": "string"},
-                                    "speed_upload": {"type": "number"},
-                                    "speed_download": {"type": "number"},
-                                    "ping": {"type": "number"},
-                                    "jitter": {"type": "number"}
-                                },
-                                "additionalProperties": false,
-                                "required": [
-                                    "speed_download",
-                                    "speed_upload",
-                                    "ping",
-                                    "time",
-                                    "jitter",
-                                    "server"
-                                ]
-                            }
-                        }
-                    },
-                    "additionalProperties": false,
-                    "required": ["performed_tests"]
-                }
-            },
             "additionalProperties": false,
             "required": ["data"]
         },
         {
-            "description": "Trigger measure data request",
+            "description": "Get the interfaces a measurement can be bound to.",
             "properties": {
                 "module": {"enum": ["librespeed"]},
                 "kind": {"enum": ["request"]},
-                "action": {"enum": ["measure"]}
+                "action": {"enum": ["get_links"]}
             },
             "additionalProperties": false
         },
         {
-            "description": "Trigger measure data reply",
+            "description": "Get links reply",
             "properties": {
                 "module": {"enum": ["librespeed"]},
                 "kind": {"enum": ["reply"]},
-                "action": {"enum": ["measure"]},
+                "action": {"enum": ["get_links"]},
                 "data": {
                     "type": "object",
                     "properties": {
-                        "async_id": {"type": "string"}
+                        "links": {
+                            "type": "array",
+                            "items": {"$ref": "#/definitions/librespeed_interface"},
+                            "description": "Interfaces to offer, each standing for its link; lan and other links without a gateway are left out."
+                        },
+                        "interfaces": {
+                            "type": "object",
+                            "patternProperties": {"^[A-Za-z0-9_]+$": {"$ref": "#/definitions/librespeed_interface"}},
+                            "additionalProperties": false,
+                            "description": "Each interface and the link it is measured and recorded as (wan6 as wan)."
+                        },
+                        "down": {
+                            "type": "array",
+                            "items": {"$ref": "#/definitions/librespeed_interface"},
+                            "description": "Interfaces whose link is down; start refuses them."
+                        }
                     },
                     "additionalProperties": false,
-                    "required": ["async_id"]
-                }
-            },
-            "additionalProperties": false,
-            "required": ["data"]
-        },
-        {
-            "description": "Measure notification",
-            "properties": {
-                "module": {"enum": ["librespeed"]},
-                "kind": {"enum": ["notification"]},
-                "action": {"enum": ["measure"]},
-                "data": {
-                    "type": "object",
-                    "properties": {
-                        "async_id": {"type": "string"},
-                        "passed": {"type": "boolean"}
-                    },
-                    "additionalProperties": false,
-                    "required": ["async_id", "passed"]
+                    "required": ["links", "interfaces", "down"]
                 }
             },
             "additionalProperties": false,

@@ -1,0 +1,23 @@
+{
+	"resolution": "1d",
+	"entries": [
+		{
+			"timestamp": "2026-11-14",
+			"epoch": 1794614400,
+			"interface": "wan",
+			"samples": 3,
+			"download_mbps": 901.5,
+			"download_mbps_min": 900.5,
+			"download_mbps_max": 902.5,
+			"upload_mbps": 401.25,
+			"upload_mbps_min": 400.25,
+			"upload_mbps_max": 402.25,
+			"ping_ms": 1.1000000000000001,
+			"ping_ms_min": 1,
+			"ping_ms_max": 1.2,
+			"jitter_ms": 0.10000000000000001,
+			"jitter_ms_min": 0,
+			"jitter_ms_max": 0.20000000000000001
+		}
+	]
+}
