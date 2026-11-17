@@ -1,0 +1,24 @@
+{
+	"interface": "wan",
+	"server": "auto",
+	"scheme": "auto",
+	"server_list": "http://192.0.2.2:8080/lists/up.json",
+	"schedule": {
+		"enabled": false,
+		"interval": "1d",
+		"days": "*",
+		"hours": "2-5",
+		"cron": "",
+		"next_runs": [
+			
+		]
+	},
+	"schedules": [
+		
+	],
+	"history": {
+		"enabled": true,
+		"path": "/tmp/librespeed/history.jsonl",
+		"retention": "30d"
+	}
+}

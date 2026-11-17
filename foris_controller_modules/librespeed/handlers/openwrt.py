@@ -1,6 +1,6 @@
 #
 # foris-controller-librespeed-module
-# Copyright (C) 2022 CZ.NIC, z.s.p.o. (http://www.nic.cz/)
+# Copyright (C) 2022-2026 CZ.NIC, z.s.p.o. (http://www.nic.cz/)
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -21,11 +21,8 @@ import logging
 
 from foris_controller.handler_base import BaseOpenwrtHandler
 from foris_controller.utils import logger_wrapper
-from foris_controller_backends.librespeed import (
-    LibreSpeedCmds,
-    LibreSpeedData,
-    LibreSpeedUci,
-)
+from foris_controller_backends.librespeed import LibreSpeedRunner, LibreSpeedUci
+from foris_controller_librespeed_module import model
 
 from .. import Handler
 
@@ -33,24 +30,46 @@ logger = logging.getLogger(__name__)
 
 
 class OpenwrtLibreSpeedHandler(Handler, BaseOpenwrtHandler):
-
-    cmds = LibreSpeedCmds()
     uci = LibreSpeedUci()
-    data = LibreSpeedData()
+    runner = LibreSpeedRunner()
 
     @logger_wrapper(logger)
-    def get_settings(self):
-        return self.uci.get_settings()
+    def get_status(self):
+        return self.runner.status()
 
     @logger_wrapper(logger)
-    def update_settings(self, server_id_in_data, autostart_enabled, server_id=None):
-        return self.uci.update_settings(server_id_in_data, autostart_enabled, server_id)
+    def start(self, interface=None):
+        return self.runner.start(interface)
 
     @logger_wrapper(logger)
-    def get_data(self, months, until):
-        data = self.data.read_records(months, until)
-        return {"performed_tests": data}
+    def stop(self):
+        return self.runner.stop()
 
     @logger_wrapper(logger)
-    def measure(self, notify, exit_notify, reset_notify):
-        return OpenwrtLibreSpeedHandler.cmds.measure(notify, exit_notify, reset_notify)
+    def get_result(self):
+        return self.runner.result()
+
+    @logger_wrapper(logger)
+    def get_history(self, query):
+        return self.runner.history(query)
+
+    @logger_wrapper(logger)
+    def get_config(self):
+        config = self.uci.read()
+        config["applied_schedules"] = self.runner.applied_schedules()
+        return config
+
+    @logger_wrapper(logger)
+    def update_config(self, update):
+        # Asking for the links costs a netifd dump, so only when they are checked.
+        link_of = self.runner.link_of() if model.touches_links(update) else {}
+        result, error, message = self.uci.update(update, link_of)
+        reply = {"result": result}
+        if error:
+            reply["error"] = error
+            reply["message"] = message
+        return reply
+
+    @logger_wrapper(logger)
+    def get_links(self):
+        return self.runner.links()

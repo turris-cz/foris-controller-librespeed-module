@@ -1,0 +1,78 @@
+#!/usr/bin/env python3
+#
+# foris-controller-librespeed-module
+# Copyright (C) 2026 CZ.NIC, z.s.p.o. (http://www.nic.cz/)
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+
+"""Stands in for `ubus call librespeed METHOD [JSON]` in the openwrt tests.
+
+It answers with replies captured from librespeed-common's rpcd plugin on
+OpenWrt 25.12 (tests/ubus_replies). A test steers it through STATE:
+
+    {"replies": {"status": [reply, reply, ...], "start": reply}, "fail": ["links"]}
+
+A list is a sequence: each call takes its first reply until one is left. A
+method in "fail" exits non-zero, as ubus does when the object is missing.
+Every call is appended to CALLS.
+"""
+
+import json
+import os
+import sys
+
+STATE = "/tmp/foris-librespeed-ubus.json"
+CALLS = "/tmp/foris-librespeed-ubus-calls.jsonl"
+REPLIES = os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "..", "ubus_replies")
+DEFAULTS = {
+    "status": "idle-status",
+    "result": "idle-result",
+    "history": "idle-history",
+    "config": "idle-config",
+    "links": "links",
+    "start": "start-ok",
+    "stop": "stop",
+}
+
+
+def main():
+    args = sys.argv[1:]
+    while args and args[0].startswith("-"):
+        args = args[2:] if args[0] in ("-t", "-s") else args[1:]
+    if len(args) < 3 or args[0] != "call" or args[1] != "librespeed":
+        return 4
+    method = args[2]
+    data = json.loads(args[3]) if len(args) > 3 else {}
+    with open(CALLS, "a") as f:
+        f.write(json.dumps({"method": method, "data": data}) + "\n")
+
+    state = {}
+    if os.path.exists(STATE):
+        with open(STATE) as f:
+            state = json.load(f)
+    if method in state.get("fail", []):
+        return 4
+    replies = state.get("replies", {})
+    if method in replies:
+        reply = replies[method]
+        if isinstance(reply, list):
+            if len(reply) > 1:
+                replies[method] = reply[1:]
+                with open(STATE, "w") as f:
+                    json.dump(state, f)
+            reply = reply[0]
+    elif method in DEFAULTS:
+        with open(os.path.join(REPLIES, DEFAULTS[method] + ".json")) as f:
+            reply = json.load(f)
+    else:
+        return 3
+    print(json.dumps(reply, indent="\t"))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

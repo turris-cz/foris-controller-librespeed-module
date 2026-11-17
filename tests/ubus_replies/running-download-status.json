@@ -1,0 +1,13 @@
+{
+	"running": true,
+	"phase": "download",
+	"interface": "wan",
+	"pid": 356,
+	"started": 1794850035,
+	"elapsed": 2,
+	"mbps": 3189.3200000000002,
+	"progress": 6,
+	"failures": [
+		
+	]
+}

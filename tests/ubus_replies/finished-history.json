@@ -1,0 +1,20 @@
+{
+	"resolution": "raw",
+	"entries": [
+		{
+			"timestamp": "2026-11-16T17:27:46.296204222Z",
+			"epoch": 1794850066,
+			"interface": "wan",
+			"server": {
+				"name": "Local",
+				"url": "http://192.0.2.2:8080/cgi-bin/"
+			},
+			"family": "ipv4",
+			"proto": "http",
+			"download_mbps": 3199.3200000000002,
+			"upload_mbps": 11034.620000000001,
+			"ping_ms": 0.5,
+			"jitter_ms": 0.02
+		}
+	]
+}

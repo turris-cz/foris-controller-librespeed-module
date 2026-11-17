@@ -1,0 +1,49 @@
+{
+	"interface": "wan",
+	"server": "auto",
+	"scheme": "auto",
+	"server_list": "http://192.0.2.2:8080/lists/up.json",
+	"schedule": {
+		"enabled": true,
+		"interval": "1d",
+		"days": "*",
+		"hours": "2-5",
+		"cron": "5 4 * * * /usr/libexec/librespeed-run",
+		"next_runs": [
+			1794888300,
+			1794974700,
+			1795061100
+		]
+	},
+	"schedules": [
+		{
+			"interface": "wan",
+			"interval": "1d",
+			"days": "*",
+			"hours": "2-5",
+			"cron": "5 4 * * * /usr/libexec/librespeed-run",
+			"next_runs": [
+				1794888300,
+				1794974700,
+				1795061100
+			]
+		},
+		{
+			"interface": "lte",
+			"interval": "7d",
+			"days": "1,3",
+			"hours": "2-5",
+			"cron": "45 5 * * 3 /usr/libexec/librespeed-run lte",
+			"next_runs": [
+				1794980700,
+				1795585500,
+				1796190300
+			]
+		}
+	],
+	"history": {
+		"enabled": true,
+		"path": "/tmp/librespeed/history.jsonl",
+		"retention": "30d"
+	}
+}

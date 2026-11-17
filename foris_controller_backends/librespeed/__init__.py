@@ -1,6 +1,6 @@
 #
 # foris-controller-librespeed-module
-# Copyright (C) 2022 CZ.NIC, z.s.p.o. (http://www.nic.cz/)
+# Copyright (C) 2022-2026 CZ.NIC, z.s.p.o. (http://www.nic.cz/)
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -17,136 +17,146 @@
 # Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA
 #
 
-import json
-import logging
-from datetime import date
-from pathlib import Path
+"""librespeed-common on OpenWrt: its ubus object and its UCI config.
 
-from dateutil.relativedelta import relativedelta
-from foris_controller_backends.cmdline import AsyncCommand
-from foris_controller_backends.files import BaseFile
-from foris_controller_backends.uci import (
-    UciBackend,
-    get_option_named,
-    parse_bool,
-    store_bool,
-)
+Measurements run in librespeed-run, started detached by ubus start, so they
+outlive foris-controller and LuCI's stop reaches them. Nothing here keeps
+state of its own.
+"""
+
+import logging
+import os
+import time
+
+from foris_controller_backends.ubus import UbusBackend
+from foris_controller_backends.uci import UciBackend
+
+from foris_controller_librespeed_module import model
 
 logger = logging.getLogger(__name__)
 
+CONFIG = "librespeed"
+
+
+class LibreSpeedUnavailable(Exception):
+    """The librespeed ubus object did not answer."""
+
+
+def call(method, data=None):
+    reply = UbusBackend.call_ubus("librespeed", method, data)
+    if reply is None:
+        raise LibreSpeedUnavailable(method)
+    return reply
+
 
 class LibreSpeedUci:
-    def get_settings(self):
+    @staticmethod
+    def _path(backend):
+        return os.path.join(backend.config_dir, CONFIG)
+
+    @classmethod
+    def _sections(cls, backend):
+        """A missing file reads as the defaults; a broken one is an error."""
+        if not os.path.exists(cls._path(backend)):
+            return []
+        return backend.read(CONFIG).get(CONFIG, [])
+
+    def read(self):
         with UciBackend() as backend:
-            backend.add_section("librespeed", "client", "client")
-            data = backend.read("librespeed")
-            autostart_enabled = parse_bool(
-                get_option_named(data, "librespeed", "client", "autostart_enabled", "0")
-            )
-            server_id = get_option_named(data, "librespeed", "client", "server", "") or None
+            return model.config_from_uci(self._sections(backend))
 
-        return {
-            "autostart_enabled": autostart_enabled,
-            "server_id": server_id,
-        }
-
-    def update_settings(self, server_id_in_data, autostart_enabled, server_id):
-
+    def update(self, update, link_of):
+        """(result, error, message); writes only what differs, so a no-op commits nothing."""
         with UciBackend() as backend:
-            backend.add_section("librespeed", "client", "client")
-            backend.set_option(
-                "librespeed",
-                "client",
-                "autostart_enabled",
-                store_bool(autostart_enabled),
-            )
-            if server_id_in_data:
-                if server_id:
-                    backend.set_option(
-                        "librespeed",
-                        "client",
-                        "server",
-                        server_id,
-                    )
-                else:
-                    backend.del_option(
-                        "librespeed",
-                        "client",
-                        "server",
-                        fail_on_error=False,
-                    )
-
-        return True
-
-    def get_params(self) -> dict:
-        with UciBackend() as backend:
-            backend.add_section("librespeed", "client", "client")
-            data = backend.read("librespeed")
-            data_dir = get_option_named(
-                data, "librespeed", "client", "data_dir", "/tmp/librespeed-data/"
-            )
-        server_id = get_option_named(data, "librespeed", "client", "server", "") or None
-        return {
-            "data_dir": data_dir,
-            "server_id": server_id,
-        }
+            sections = self._sections(backend)
+            error = model.validate_update(model.config_from_uci(sections), update, link_of)
+            if error:
+                return False, error[0], error[1]
+            ops = model.plan_update(sections, update)
+            if ops and not os.path.exists(self._path(backend)):
+                open(self._path(backend), "a").close()  # uci writes only to an existing file
+            for op in ops:
+                if op[0] == "set":
+                    backend.set_option(CONFIG, op[1], op[2], op[3])
+                elif op[0] == "del":
+                    backend.del_option(CONFIG, op[1], op[2], fail_on_error=False)
+                elif op[0] == "add_named":
+                    backend.add_section(CONFIG, op[1], op[2])
+                elif op[0] == "add_schedule":
+                    name = backend.add_section(CONFIG, "schedule")
+                    for option, value in op[1].items():
+                        backend.set_option(CONFIG, name, option, value)
+                elif op[0] == "delete":
+                    backend.del_section(CONFIG, op[1])
+        return True, None, None
 
 
-class LibreSpeedData(BaseFile):
-    def read_records(self, months: int, until: date):
-        until = until.replace(day=1)
+class LibreSpeedRunner:
+    START_WAIT = 5.0
+    POLL = 0.25
 
-        # Get months
-        month_range = reversed([until - relativedelta(months=i) for i in range(months)])
+    def status(self):
+        return model.status_reply(call("status"))
 
-        params = LibreSpeedUci().get_params()
+    def start(self, interface):
+        """Waits until the measurement runs or has ended, at most START_WAIT.
 
-        records = []
-        for month in month_range:
-            month_path = Path(params["data_dir"]) / f"{month.year:04}-{month.month:02}"
-            record_files = sorted(month_path.glob("*.json"))
-            for record_file in record_files:
-                with record_file.open("r") as f:
-                    inner_records = json.load(f)
-                    for record in inner_records:
-                        records.append(
-                            {
-                                "server": record.get("server", {}).get("name"),
-                                "speed_upload": float(record.get("upload", -1)),
-                                "speed_download": float(record.get("download", -1)),
-                                "ping": float(record.get("ping", -1)),
-                                "jitter": float(record.get("jitter", -1)),
-                                "time": record.get("timestamp"),
-                            }
-                        )
+        It has ended when last_finished changes: a time comparison would take a
+        run that ended in the second this one started for this one.
+        """
+        try:
+            previous = call("status").get("last_finished")
+            reply = call("start", {"interface": interface} if interface else None)
+        except LibreSpeedUnavailable:
+            return {"started": False, "error": "backend_unavailable"}
+        if reply.get("started") is not True:
+            message = reply.get("error") if isinstance(reply.get("error"), str) else ""
+            out = {"started": False, "error": model.start_error(message)}
+            if message:
+                out["message"] = message
+            return out
 
-        return records
+        deadline = time.monotonic() + self.START_WAIT
+        while time.monotonic() < deadline:
+            try:
+                status = call("status")
+            except LibreSpeedUnavailable:
+                break
+            finished = status.get("last_finished")
+            if status.get("running") is True or (finished is not None and finished != previous):
+                break
+            time.sleep(self.POLL)
+        return {"started": True}
 
+    def stop(self):
+        running = call("status").get("running") is True
+        call("stop")
+        return {"stopped": running}
 
-class LibreSpeedCmds(AsyncCommand):
-    def measure(self, notify, exit_notify, reset_notify):
-        logger.debug("Starting to measure network speed.")
+    def result(self):
+        return {"measurement": model.result_reply(call("result"))}
 
-        def handler_exit(process_data):
-            exit_notify(
-                {"async_id": process_data.id, "passed": process_data.get_retval() == 0}
-            )
-            logger.debug(
-                "Measuring using librespeed finished: (retval=%d)"
-                % process_data.get_retval()
-            )
+    def history(self, query):
+        return model.history_reply(call("history", query or None))
 
-        params = LibreSpeedUci().get_params()
-        server_args = []
-        if params["server_id"] is not None:
-            server_args = ["--server", params["server_id"]]
+    def links(self):
+        links = model.links_reply(call("links"))
+        if links is None:
+            raise LibreSpeedUnavailable("links")
+        return links
 
-        process_id = self.start_process(
-            ["/usr/bin/turris-librespeed", "--data-dir", params["data_dir"]] + server_args,
-            [],
-            handler_exit,
-            reset_notify,
-        )
+    def link_of(self):
+        """Interface to link, or {} when netifd cannot say; validation then compares names."""
+        try:
+            links = model.links_reply(call("links"))
+        except LibreSpeedUnavailable:
+            links = None
+        return links["interfaces"] if links else {}
 
-        logger.debug("Measuring network speed started - '%s'." % process_id)
-        return process_id
+    def applied_schedules(self):
+        """What cron runs; [] when the ubus object does not answer, so settings still load."""
+        try:
+            return model.applied_schedules_reply(call("config"))
+        except LibreSpeedUnavailable:
+            logger.warning("librespeed ubus object did not answer; no applied schedules to show")
+            return []
